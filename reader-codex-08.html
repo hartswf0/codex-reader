@@ -355,6 +355,7 @@
         });
         const readerContainer = document.getElementById('reader-container');
         const selectionOverlay = document.getElementById('selection-overlay');
+        const paperList = document.getElementById('paper-list');
         const contentColumn = document.getElementById('content-column');
         const sourceFileDisplay = document.getElementById('source-file-display');
         const togglePreambleBtn = document.getElementById('toggle-preamble-btn');
@@ -515,23 +516,20 @@
             readerContainer.style.display = 'none';
             selectionOverlay.style.display = 'flex';
             try {
-                const response = await fetch('.');
-                const text = await response.text();
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(text, 'text/html');
-                const links = Array.from(doc.querySelectorAll('a'))
-                    .map(a => a.getAttribute('href'))
-                    .filter(href => href && href.endsWith('.json'));
+                const response = await fetch('manifest.json');
+                if (!response.ok) throw new Error('Could not fetch manifest.json. Make sure the file exists.');
+                const links = await response.json();
                 
                 paperList.innerHTML = '';
                 if (links.length === 0) {
-                    paperList.innerHTML = '<li>No .json files found in this directory.</li>';
+                    paperList.innerHTML = '<li>No papers listed in manifest.json.</li>';
                     return;
                 }
 
                 links.forEach(file => {
                     const li = document.createElement('li');
-                    li.textContent = file.replace('.json', '');
+                    li.textContent = file.replace('.json', '').replace(/-/g, ' ');
+                    li.style.textTransform = 'capitalize';
                     li.onclick = () => { 
                         window.history.pushState({}, '', `?paper=${file}`);
                         loadPaper(file);
@@ -539,7 +537,8 @@
                     paperList.appendChild(li);
                 });
             } catch (error) {
-                selectionOverlay.innerHTML = `<p>Error listing files. Are you running this from a server?</p>`;
+                selectionOverlay.innerHTML = `<p>Error loading papers: ${error.message}</p>`;
+                console.error(error);
             }
         }
 
