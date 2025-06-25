@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Codex - Reader v2 (Fixed)</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; }
+        h1 { text-align: center; color: #333; font-weight: 300; }
+
+        /* --- Controls --- */
+        .controls { max-width: 800px; margin: 0 auto 20px auto; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+        .controls button { padding: 8px 16px; border: 1px solid #ccc; border-radius: 5px; background-color: #f0f0f0; cursor: pointer; font-size: 14px; }
+        .controls button:hover { background-color: #e0e0e0; }
+
+        /* --- Chat View (unchanged) --- */
+        .chat-view { max-width: 800px; margin: auto; }
+        .message { margin-bottom: 20px; padding: 15px; border-radius: 12px; line-height: 1.6; background-color: white; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .user { border-left: 4px solid #2196F3; }
+        .model { border-left: 4px solid #4CAF50; }
+        .message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .role { font-weight: 600; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .user .role { color: #1976D2; }
+        .model .role { color: #2E7D32; }
+        .message-id { font-size: 0.8em; color: #888; font-family: monospace; }
+        .part-container { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; }
+        .part-label { font-weight: bold; font-size: 0.8em; color: #555; margin-bottom: 5px; text-transform: uppercase; }
+
+        /* --- Reading Mode --- */
+        .reading-mode-container { display: none; }
+        .page { background: #fff; padding: 40px 50px; margin: 20px auto; max-width: 700px; box-shadow: 0 5px 25px rgba(0,0,0,0.1); position: relative; min-height: 900px; display: flex; flex-direction: column; }
+        .page-content { flex-grow: 1; }
+        .page-footer { text-align: center; font-size: 12px; color: #999; padding-top: 20px; }
+        .text-column { font-family: 'Georgia', serif; line-height: 1.8; font-size: 16px; color: #333; }
+        .preamble { background-color: #fffbe6; padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ffe58f; font-style: italic; color: #665c3e; }
+        .citation-marker { font-weight: bold; color: #1a73e8; margin-right: 8px; font-family: monospace; font-size: 0.8em; }
+
+        /* --- Shared & Utility --- */
+        .text-content { font-size: 16px; color: #333; }
+        .text-content h1, .text-content h2, .text-content h3 { margin-top: 1.5em; margin-bottom: 0.5em; color: #111; line-height: 1.3; }
+        .text-content code { background-color: #eee; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+        .text-content pre { background-color: #f4f4f4; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }
+        .error { color: #D32F2F; background-color: #FFEBEE; padding: 15px; border-radius: 8px; border: 1px solid #FFCDD2; }
+        .hidden { display: none; }
+        body.reading-mode-active .chat-view { display: none; }
+        body.reading-mode-active .reading-mode-container { display: block; }
+    </style>
+</head>
+<body>
+
+    <h1>Chat Codex</h1>
+
+    <div class="controls">
+        <button id="toggle-reading-mode">Enter Reading Mode</button>
+        <button id="toggle-user" class="chat-view-btn">Toggle User</button>
+        <button id="toggle-model" class="chat-view-btn">Toggle Model</button>
+        <button id="toggle-reasoning" class="chat-view-btn">Toggle Reasoning</button>
+        <button id="toggle-preamble" class="reading-mode-btn hidden">Toggle Preamble</button>
+    </div>
+
+    <div id="chat-view" class="chat-view"></div>
+    <div id="reading-mode-container" class="reading-mode-container"></div>
+
+    <script>
+        let isReadingMode = false;
+        const PAGE_CONTENT_HEIGHT = 900; // Approximate height of content area on a page
+
+        function renderMarkdown(text) {
+            const rawMarkup = marked.parse(text || '', { gfm: true, breaks: true });
+            return DOMPurify.sanitize(rawMarkup);
+        }
+
+        async function main() {
+            const chatContainer = document.getElementById('chat-view');
+            let messageCounter = 0;
+
+            try {
+                const response = await fetch('./cleaned_chat.json');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const contents = await response.json();
+
+                if (!contents || !Array.isArray(contents)) throw new Error("Invalid chat data format.");
+
+                contents.forEach(item => {
+                    if (!item || !item.role || !item.parts) return;
+                    messageCounter++;
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `message ${item.role}`;
+                    messageDiv.id = `msg-${messageCounter}`;
+
+                    const headerDiv = document.createElement('div');
+                    headerDiv.className = 'message-header';
+                    headerDiv.innerHTML = `<div class="role">${item.role}</div><div class="message-id">#${messageCounter}</div>`;
+                    messageDiv.appendChild(headerDiv);
+
+                    if (item.role === 'model' && item.parts.length > 1) {
+                        const [reasoningPart, ...completionParts] = item.parts;
+                        messageDiv.appendChild(createPartContainer('Reasoning', reasoningPart.text, 'reasoning-part'));
+                        messageDiv.appendChild(createPartContainer('Completion', completionParts.map(p => p.text).join('\n\n')));
+                    } else {
+                        const textContent = document.createElement('div');
+                        textContent.className = 'text-content';
+                        textContent.innerHTML = renderMarkdown(item.parts.map(p => p.text).join('\n\n'));
+                        messageDiv.appendChild(textContent);
+                    }
+                    chatContainer.appendChild(messageDiv);
+                });
+
+            } catch (error) {
+                chatContainer.innerHTML = `<div class="error"><strong>Error:</strong> Could not load or parse chat data.<br>${error.message}</div>`;
+                console.error(error);
+            }
+            setupToggles();
+        }
+
+        function createPartContainer(label, text, extraClass = '') {
+            const container = document.createElement('div');
+            container.className = `part-container ${extraClass}`.trim();
+            const textContent = document.createElement('div');
+            textContent.className = 'text-content';
+            textContent.innerHTML = renderMarkdown(text);
+            container.innerHTML = `<div class="part-label">${label}</div>`;
+            container.appendChild(textContent);
+            return container;
+        }
+
+        async function buildReadingMode() {
+            const readingContainer = document.getElementById('reading-mode-container');
+            readingContainer.innerHTML = ''; // Clear previous content
+
+            try {
+                const response = await fetch('./cleaned_chat.json');
+                if (!response.ok) throw new Error(`HTTP fetch failed: ${response.statusText}`);
+                const contents = await response.json();
+
+                if (!contents || !Array.isArray(contents) || contents.length === 0) {
+                    throw new Error("Chat data is empty or in an invalid format.");
+                }
+
+                // 1. Process and stitch all model completions
+                const allCompletions = contents
+                    .filter(item => item.role === 'model' && item.parts.length > 1)
+                    .map(item => item.parts.slice(1).map(p => p.text).join('\n\n'));
+
+                if (allCompletions.length === 0) {
+                    readingContainer.innerHTML = '<div class="error">No model completions found to display in reading mode.</div>';
+                    return;
+                }
+
+                const processedHtml = allCompletions.map(completionText => {
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = renderMarkdown(completionText);
+
+                    // 2. More robust preamble detection
+                    const preambleNodes = [];
+                    let firstMeaningfulNodeFound = false;
+                    for (const node of Array.from(tempDiv.childNodes)) {
+                        if (firstMeaningfulNodeFound) break;
+                        if (node.nodeType === Node.ELEMENT_NODE && (['H1', 'H2', 'H3', 'UL', 'OL', 'BLOCKQUOTE', 'PRE'].includes(node.tagName) || node.querySelector('strong, b'))) {
+                            firstMeaningfulNodeFound = true;
+                        } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '') {
+                            // Ignore whitespace-only text nodes
+                            continue;
+                        } else {
+                            preambleNodes.push(node);
+                        }
+                    }
+                    if (preambleNodes.length > 0 && preambleNodes.length < tempDiv.childNodes.length) {
+                        const preambleWrapper = document.createElement('div');
+                        preambleWrapper.className = 'preamble';
+                        preambleNodes.forEach(node => preambleWrapper.appendChild(node));
+                        tempDiv.insertBefore(preambleWrapper, tempDiv.firstChild);
+                    }
+                    return tempDiv.innerHTML;
+                }).join('<hr style="margin: 40px 0; border: 1px dashed #ccc;">');
+
+                const contentSource = document.createElement('div');
+                contentSource.innerHTML = processedHtml;
+
+                // 3. Add inline citation markers
+                let citationCounter = 0;
+                contentSource.querySelectorAll('h1, h2, h3, strong, b, li').forEach(el => {
+                    citationCounter++;
+                    const marker = document.createElement('span');
+                    marker.className = 'citation-marker';
+                    marker.textContent = `[${citationCounter}]`;
+                    el.prepend(marker);
+                });
+
+                // 4. New, robust pagination logic
+                const tempRenderDiv = document.createElement('div');
+                tempRenderDiv.style.position = 'absolute';
+                tempRenderDiv.style.left = '-9999px';
+                tempRenderDiv.style.width = '700px'; // Same as page width
+                tempRenderDiv.appendChild(contentSource);
+                document.body.appendChild(tempRenderDiv);
+
+                const allNodes = Array.from(contentSource.childNodes);
+                tempRenderDiv.remove(); // Clean up the measurement div
+
+                let pageCounter = 0;
+                let currentPageContent;
+
+                function createNewPage() {
+                    pageCounter++;
+                    const page = document.createElement('div');
+                    page.className = 'page';
+                    const pageContent = document.createElement('div');
+                    pageContent.className = 'page-content';
+                    const textColumn = document.createElement('div');
+                    textColumn.className = 'text-column';
+                    pageContent.appendChild(textColumn);
+                    page.appendChild(pageContent);
+                    page.innerHTML += `<div class="page-footer">${pageCounter}</div>`;
+                    readingContainer.appendChild(page);
+                    return textColumn;
+                }
+
+                currentPageContent = createNewPage();
+
+                for (const node of allNodes) {
+                    currentPageContent.appendChild(node.cloneNode(true));
+                    // Check height after adding, if it overflows, move to next page
+                    if (currentPageContent.offsetHeight > PAGE_CONTENT_HEIGHT && currentPageContent.childElementCount > 1) {
+                        currentPageContent.lastChild.remove();
+                        currentPageContent = createNewPage();
+                        currentPageContent.appendChild(node.cloneNode(true));
+                    }
+                }
+
+            } catch (error) {
+                readingContainer.innerHTML = `<div class="error"><strong>Error building reading mode:</strong><br>${error.message}</div>`;
+                console.error(error);
+            }
+        }
+
+        function setupToggles() {
+            document.getElementById('toggle-user').addEventListener('click', () => document.querySelectorAll('.message.user').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-model').addEventListener('click', () => document.querySelectorAll('.message.model').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-reasoning').addEventListener('click', () => document.querySelectorAll('.reasoning-part').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-preamble').addEventListener('click', () => document.querySelectorAll('.preamble').forEach(el => el.classList.toggle('hidden')));
+
+            const readingModeButton = document.getElementById('toggle-reading-mode');
+            readingModeButton.addEventListener('click', () => {
+                isReadingMode = !isReadingMode;
+                document.body.classList.toggle('reading-mode-active');
+                readingModeButton.textContent = isReadingMode ? 'Exit Reading Mode' : 'Enter Reading Mode';
+                
+                document.querySelectorAll('.reading-mode-btn').forEach(btn => btn.classList.toggle('hidden'));
+                document.querySelectorAll('.chat-view-btn').forEach(btn => btn.classList.toggle('hidden'));
+
+                if (isReadingMode && document.getElementById('reading-mode-container').innerHTML.trim() === '') {
+                    buildReadingMode();
+                }
+            });
+        }
+
+        main();
+    </script>
+
+</body>
+</html>

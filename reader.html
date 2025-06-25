@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Chat Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f7f7f7; color: #333; }
+        h1 { text-align: center; color: #444; font-weight: 300; }
+        
+        .controls { max-width: 800px; margin: 0 auto 20px auto; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+        .controls button { padding: 8px 16px; border: 1px solid #ccc; border-radius: 5px; background-color: #f0f0f0; cursor: pointer; font-size: 14px; }
+        .controls button:hover { background-color: #e0e0e0; }
+
+        /* --- Chat View Specific Styles --- */
+        .chat-container { max-width: 800px; margin: auto; }
+        .message { margin-bottom: 20px; padding: 15px; border-radius: 12px; line-height: 1.6; display: flex; flex-direction: column; background-color: white; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .user { border-left: 4px solid #2196F3; }
+        .model { border-left: 4px solid #4CAF50; }
+        .message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .role { font-weight: 600; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .user .role { color: #1976D2; }
+        .model .role { color: #2E7D32; }
+        .message-id { font-size: 0.8em; color: #888; font-family: monospace; }
+        .part-container { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; }
+        .part-label { font-weight: bold; font-size: 0.8em; color: #555; margin-bottom: 5px; text-transform: uppercase; }
+        
+        /* --- Reading Mode Specific Styles --- */
+        #reading-mode-container { max-width: 800px; margin: auto; background-color: white; padding: 40px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .document-content { position: relative; padding-left: 45px; margin-bottom: 2em; }
+        .preamble { position: relative; padding-left: 45px; margin-bottom: 1em; color: #555; font-style: italic; }
+        [data-cite-id] { position: relative; }
+        [data-cite-id]::before {
+            content: attr(data-cite-id);
+            position: absolute;
+            left: -45px;
+            top: 0;
+            font-size: 11px;
+            font-family: monospace;
+            color: #aaa;
+            font-weight: normal;
+        }
+
+        /* --- General Content Styles --- */
+        .text-content p:first-child, .preamble p:first-child { margin-top: 0; }
+        .text-content p:last-child, .preamble p:last-child { margin-bottom: 0; }
+        .text-content h1, .text-content h2, .text-content h3 { margin-top: 1em; margin-bottom: 0.5em; color: #333; }
+        .text-content code { background-color: #eee; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+        .text-content pre { background-color: #f4f4f4; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }
+        .text-content blockquote { border-left: 3px solid #ccc; padding-left: 15px; margin-left: 0; color: #666; }
+        .text-content ul, .text-content ol { padding-left: 20px; }
+
+        .error { color: #D32F2F; background-color: #FFEBEE; padding: 15px; border-radius: 8px; border: 1px solid #FFCDD2; }
+        .hidden { display: none; }
+
+        /* Hide elements based on view mode */
+        body.reading-mode-active #chat-container, body.reading-mode-active .chat-view-btn { display: none; }
+        body:not(.reading-mode-active) #reading-mode-container, body:not(.reading-mode-active) .reading-mode-btn { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Chat Transcript</h1>
+
+    <div class="controls">
+        <button id="toggle-reading-mode">Enter Reading Mode</button>
+        <button class="chat-view-btn" id="toggle-user">Toggle User</button>
+        <button class="chat-view-btn" id="toggle-model">Toggle Model</button>
+        <button class="chat-view-btn" id="toggle-reasoning">Toggle Reasoning</button>
+        <button class="reading-mode-btn hidden" id="toggle-preamble">Toggle Preamble</button>
+    </div>
+
+    <div id="chat-container" class="chat-container"></div>
+    <div id="reading-mode-container" class="hidden"></div>
+
+    <script>
+        let chatContents = [];
+        let isReadingMode = false;
+
+        function renderMarkdown(text) {
+            const rawMarkup = marked.parse(text || '');
+            return DOMPurify.sanitize(rawMarkup, {USE_PROFILES: {html: true}});
+        }
+
+        async function main() {
+            await loadChatData();
+            renderChatView();
+            setupToggles();
+        }
+
+        async function loadChatData() {
+            try {
+                const response = await fetch('./cleaned_chat.json');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const contents = await response.json();
+                if (!contents || !Array.isArray(contents)) throw new Error("Invalid chat data format.");
+                chatContents = contents;
+            } catch (error) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.innerHTML = `<strong>Error:</strong> Could not load or parse chat data.<br>${error.message}`;
+                document.getElementById('chat-container').appendChild(errorDiv);
+                console.error(error);
+            }
+        }
+
+        function renderChatView() {
+            const chatContainer = document.getElementById('chat-container');
+            chatContainer.innerHTML = '';
+            let messageCounter = 0;
+
+            chatContents.forEach(item => {
+                if (!item || !item.role || !item.parts) return;
+
+                messageCounter++;
+                const messageDiv = document.createElement('div');
+                messageDiv.classList.add('message', item.role);
+                messageDiv.id = `msg-${messageCounter}`;
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'message-header';
+                const roleDiv = document.createElement('div');
+                roleDiv.className = 'role';
+                roleDiv.textContent = item.role;
+                const idDiv = document.createElement('div');
+                idDiv.className = 'message-id';
+                idDiv.textContent = `#${messageCounter}`;
+                headerDiv.appendChild(roleDiv);
+                headerDiv.appendChild(idDiv);
+                messageDiv.appendChild(headerDiv);
+
+                const textContent = document.createElement('div');
+                textContent.className = 'text-content';
+
+                if (item.role === 'model' && item.parts.length > 1) {
+                    const reasoningPart = item.parts[0];
+                    const completionParts = item.parts.slice(1);
+
+                    const reasoningContainer = document.createElement('div');
+                    reasoningContainer.className = 'part-container reasoning-part';
+                    reasoningContainer.innerHTML = `<div class="part-label">Reasoning</div><div class="text-content">${renderMarkdown(reasoningPart.text)}</div>`;
+                    messageDiv.appendChild(reasoningContainer);
+                    
+                    const completionContainer = document.createElement('div');
+                    completionContainer.className = 'part-container';
+                    completionContainer.innerHTML = `<div class="part-label">Completion</div><div class="text-content">${renderMarkdown(completionParts.map(p => p.text).join('\n\n'))}</div>`;
+                    messageDiv.appendChild(completionContainer);
+                } else {
+                    textContent.innerHTML = renderMarkdown(item.parts.map(p => p.text).join('\n\n'));
+                    messageDiv.appendChild(textContent);
+                }
+                chatContainer.appendChild(messageDiv);
+            });
+        }
+
+        function buildReadingMode() {
+            const container = document.getElementById('reading-mode-container');
+            container.innerHTML = '';
+            let citationCounter = 1;
+
+            const modelCompletions = chatContents.filter(item => item.role === 'model');
+
+            modelCompletions.forEach(item => {
+                const parts = (item.parts.length > 1) ? item.parts.slice(1) : item.parts;
+                const rawText = parts.map(p => p.text).join('\n\n');
+
+                // Preamble detection: text before the first major element
+                const preambleRegex = /^(.*?)(?=\n\n|\*\*|##|---)/s;
+                const match = rawText.match(preambleRegex);
+                
+                let preambleText = '';
+                let mainText = rawText;
+
+                if (match && match[1].trim().length > 0) {
+                    preambleText = match[1];
+                    mainText = rawText.substring(preambleText.length);
+                }
+
+                if (preambleText) {
+                    const preambleDiv = document.createElement('div');
+                    preambleDiv.className = 'preamble';
+                    preambleDiv.innerHTML = renderMarkdown(preambleText);
+                    container.appendChild(preambleDiv);
+                }
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'document-content';
+                contentDiv.innerHTML = renderMarkdown(mainText);
+
+                // Add citation numbers
+                const targets = contentDiv.querySelectorAll('h1, h2, h3, h4, h5, h6, li, strong, b');
+                targets.forEach(el => {
+                    el.dataset.citeId = citationCounter++;
+                });
+
+                container.appendChild(contentDiv);
+            });
+        }
+
+        function setupToggles() {
+            // Chat view toggles
+            document.getElementById('toggle-user').addEventListener('click', () => document.querySelectorAll('.message.user').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-model').addEventListener('click', () => document.querySelectorAll('.message.model').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-reasoning').addEventListener('click', () => document.querySelectorAll('.reasoning-part').forEach(el => el.classList.toggle('hidden')));
+            
+            // Reading mode toggles
+            document.getElementById('toggle-preamble').addEventListener('click', () => document.querySelectorAll('.preamble').forEach(el => el.classList.toggle('hidden')));
+
+            // Main view toggle
+            const readingModeButton = document.getElementById('toggle-reading-mode');
+            readingModeButton.addEventListener('click', () => {
+                isReadingMode = !isReadingMode;
+                document.body.classList.toggle('reading-mode-active');
+                readingModeButton.textContent = isReadingMode ? 'Exit Reading Mode' : 'Enter Reading Mode';
+                
+                document.querySelectorAll('.reading-mode-btn').forEach(btn => btn.classList.toggle('hidden'));
+                document.querySelectorAll('.chat-view-btn').forEach(btn => btn.classList.toggle('hidden'));
+
+                if (isReadingMode && document.getElementById('reading-mode-container').innerHTML === '') {
+                    buildReadingMode();
+                }
+            });
+        }
+
+        main();
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Codex - Reader</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f7f7f7; color: #333; transition: background-color 0.3s; }
+        h1 { text-align: center; color: #444; font-weight: 300; }
+
+        /* --- Controls --- */
+        .controls { max-width: 800px; margin: 0 auto 20px auto; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+        .controls button { padding: 8px 16px; border: 1px solid #ccc; border-radius: 5px; background-color: #f0f0f0; cursor: pointer; font-size: 14px; }
+        .controls button:hover { background-color: #e0e0e0; }
+
+        /* --- Chat View --- */
+        .chat-view { max-width: 800px; margin: auto; }
+        .message { margin-bottom: 20px; padding: 15px; border-radius: 12px; line-height: 1.6; display: flex; flex-direction: column; background-color: white; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .user { border-left: 4px solid #2196F3; }
+        .model { border-left: 4px solid #4CAF50; }
+        .message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .role { font-weight: 600; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .user .role { color: #1976D2; }
+        .model .role { color: #2E7D32; }
+        .message-id { font-size: 0.8em; color: #888; font-family: monospace; }
+        .part-container { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; }
+        .part-label { font-weight: bold; font-size: 0.8em; color: #555; margin-bottom: 5px; text-transform: uppercase; }
+
+        /* --- Reading Mode --- */
+        .reading-mode-container { display: none; font-family: 'Georgia', serif; line-height: 1.8; background: #fff; padding: 40px; margin: auto; max-width: 800px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .reading-content { display: flex; gap: 20px; }
+        .citation-column { flex: 0 0 40px; display: flex; flex-direction: column; gap: 5px; }
+        .citation-cell { height: 20px; width: 40px; background-color: #f0f0f0; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-family: monospace; color: #666; }
+        .text-column { flex-grow: 1; }
+        .preamble { background-color: #fffbe6; padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ffe58f; }
+
+        /* --- Shared & Utility --- */
+        .text-content { font-size: 16px; color: #333; }
+        .text-content p:first-child, .text-content h1:first-child, .text-content h2:first-child, .text-content h3:first-child { margin-top: 0; }
+        .text-content h1, .text-content h2, .text-content h3 { margin-top: 1.5em; margin-bottom: 0.5em; color: #111; line-height: 1.3; }
+        .text-content code { background-color: #eee; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+        .text-content pre { background-color: #f4f4f4; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }
+        .error { color: #D32F2F; background-color: #FFEBEE; padding: 15px; border-radius: 8px; border: 1px solid #FFCDD2; }
+        .hidden { display: none; }
+        body.reading-mode-active .chat-view { display: none; }
+        body.reading-mode-active .reading-mode-container { display: block; }
+    </style>
+</head>
+<body>
+
+    <h1>Chat Codex</h1>
+
+    <div class="controls">
+        <button id="toggle-reading-mode">Enter Reading Mode</button>
+        <button id="toggle-user" class="chat-view-btn">Toggle User</button>
+        <button id="toggle-model" class="chat-view-btn">Toggle Model</button>
+        <button id="toggle-reasoning" class="chat-view-btn">Toggle Reasoning</button>
+        <button id="toggle-preamble" class="reading-mode-btn hidden">Toggle Preamble</button>
+    </div>
+
+    <div id="chat-view" class="chat-view"></div>
+    <div id="reading-mode-container" class="reading-mode-container"></div>
+
+    <script>
+        let isReadingMode = false;
+        let citationCounter = 0;
+
+        function renderMarkdown(text) {
+            const rawMarkup = marked.parse(text || '');
+            return DOMPurify.sanitize(rawMarkup);
+        }
+
+        async function main() {
+            const chatContainer = document.getElementById('chat-view');
+            let messageCounter = 0;
+
+            try {
+                const response = await fetch('./cleaned_chat.json');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const contents = await response.json();
+
+                if (!contents || !Array.isArray(contents)) throw new Error("Invalid chat data format.");
+
+                contents.forEach(item => {
+                    if (!item || !item.role || !item.parts) return;
+                    messageCounter++;
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `message ${item.role}`;
+                    messageDiv.id = `msg-${messageCounter}`;
+
+                    const headerDiv = document.createElement('div');
+                    headerDiv.className = 'message-header';
+                    headerDiv.innerHTML = `<div class="role">${item.role}</div><div class="message-id">#${messageCounter}</div>`;
+                    messageDiv.appendChild(headerDiv);
+
+                    if (item.role === 'model' && item.parts.length > 1) {
+                        const [reasoningPart, ...completionParts] = item.parts;
+                        messageDiv.appendChild(createPartContainer('Reasoning', reasoningPart.text, 'reasoning-part'));
+                        messageDiv.appendChild(createPartContainer('Completion', completionParts.map(p => p.text).join('\n\n')));
+                    } else {
+                        const textContent = document.createElement('div');
+                        textContent.className = 'text-content';
+                        textContent.innerHTML = renderMarkdown(item.parts.map(p => p.text).join('\n\n'));
+                        messageDiv.appendChild(textContent);
+                    }
+                    chatContainer.appendChild(messageDiv);
+                });
+
+            } catch (error) {
+                chatContainer.innerHTML = `<div class="error"><strong>Error:</strong> Could not load or parse chat data.<br>${error.message}</div>`;
+                console.error(error);
+            }
+            setupToggles();
+        }
+
+        function createPartContainer(label, text, extraClass = '') {
+            const container = document.createElement('div');
+            container.className = `part-container ${extraClass}`.trim();
+            const textContent = document.createElement('div');
+            textContent.className = 'text-content';
+            textContent.innerHTML = renderMarkdown(text);
+            container.innerHTML = `<div class="part-label">${label}</div>`;
+            container.appendChild(textContent);
+            return container;
+        }
+
+        async function buildReadingMode() {
+            const readingContainer = document.getElementById('reading-mode-container');
+            const response = await fetch('./cleaned_chat.json');
+            const contents = await response.json();
+            citationCounter = 0;
+
+            const completions = contents
+                .filter(item => item.role === 'model' && item.parts.length > 1)
+                .map(item => item.parts.slice(1).map(p => p.text).join('\n\n'))
+                .join('\n\n<hr>\n\n');
+
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = renderMarkdown(completions);
+
+            // Identify and wrap preamble
+            let firstMeaningfulElement = tempDiv.querySelector('h1, h2, h3, h4, h5, h6, strong, b, ul, ol, blockquote');
+            if (firstMeaningfulElement) {
+                let preambleNodes = [];
+                let currentNode = tempDiv.firstChild;
+                while (currentNode && currentNode !== firstMeaningfulElement) {
+                    preambleNodes.push(currentNode);
+                    currentNode = currentNode.nextSibling;
+                }
+                if (preambleNodes.length > 0) {
+                    const preambleWrapper = document.createElement('div');
+                    preambleWrapper.className = 'preamble';
+                    preambleNodes.forEach(node => preambleWrapper.appendChild(node.cloneNode(true)));
+                    preambleNodes.forEach(node => node.remove());
+                    tempDiv.insertBefore(preambleWrapper, tempDiv.firstChild);
+                }
+            }
+            
+            const readingContent = document.createElement('div');
+            readingContent.className = 'reading-content';
+            const citationCol = document.createElement('div');
+            citationCol.className = 'citation-column';
+            const textCol = document.createElement('div');
+            textCol.className = 'text-column';
+            textCol.innerHTML = tempDiv.innerHTML;
+
+            // Add citation cells
+            textCol.querySelectorAll('h1, h2, h3, strong, b, li').forEach(el => {
+                citationCounter++;
+                const cell = document.createElement('div');
+                cell.className = 'citation-cell';
+                cell.textContent = citationCounter;
+                el.setAttribute('data-cite-id', citationCounter);
+                // Simple alignment for now
+                const newCell = cell.cloneNode(true);
+                newCell.style.top = `${el.offsetTop}px`;
+                citationCol.appendChild(newCell);
+            });
+
+            readingContent.appendChild(citationCol);
+            readingContent.appendChild(textCol);
+            readingContainer.innerHTML = '';
+            readingContainer.appendChild(readingContent);
+        }
+
+        function setupToggles() {
+            document.getElementById('toggle-user').addEventListener('click', () => document.querySelectorAll('.message.user').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-model').addEventListener('click', () => document.querySelectorAll('.message.model').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-reasoning').addEventListener('click', () => document.querySelectorAll('.reasoning-part').forEach(el => el.classList.toggle('hidden')));
+            document.getElementById('toggle-preamble').addEventListener('click', () => document.querySelectorAll('.preamble').forEach(el => el.classList.toggle('hidden')));
+
+            const readingModeButton = document.getElementById('toggle-reading-mode');
+            readingModeButton.addEventListener('click', () => {
+                isReadingMode = !isReadingMode;
+                document.body.classList.toggle('reading-mode-active');
+                readingModeButton.textContent = isReadingMode ? 'Exit Reading Mode' : 'Enter Reading Mode';
+                
+                document.querySelectorAll('.reading-mode-btn').forEach(btn => btn.classList.toggle('hidden'));
+                document.querySelectorAll('.chat-view-btn').forEach(btn => btn.classList.toggle('hidden'));
+
+                if (isReadingMode && document.getElementById('reading-mode-container').innerHTML === '') {
+                    buildReadingMode();
+                }
+            });
+        }
+
+        main();
+    </script>
+
+</body>
+</html>

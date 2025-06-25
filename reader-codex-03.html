@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Codex - Reader v4</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <style>
+        html { scroll-behavior: smooth; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f7f7f7; color: #333; }
+        
+        #title-container { text-align: center; margin-bottom: 20px; border-bottom: 1px solid #ddd; padding-bottom: 15px; }
+        #main-title { font-weight: 300; margin: 0; font-size: 2.5em; color: #444; }
+        #source-file-display { font-family: monospace; color: #777; font-size: 1.2em; margin-top: 5px; }
+
+        .controls { max-width: 800px; margin: 0 auto 20px auto; padding: 10px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+        .controls button { padding: 8px 16px; border: 1px solid #ccc; border-radius: 5px; background-color: #f0f0f0; cursor: pointer; font-size: 14px; }
+        .controls button:hover { background-color: #e0e0e0; }
+
+        .reading-mode-container { display: none; max-width: 800px; margin: auto; }
+        
+        .top-bar { position: sticky; top: 0; z-index: 100; background: rgba(255,255,255,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid #e5e5e5; padding: 8px; display: flex; align-items: center; gap: 15px; }
+        .stats-bar { flex-grow: 1; display: flex; flex-wrap: wrap; gap: 5px; }
+        .nav-button { cursor: pointer; padding: 2px 8px; border-radius: 4px; background-color: #e5e7eb; color: #4b5563; font-family: monospace; font-size: 12px; }
+        .nav-button:hover { background-color: #d1d5db; color: #1f2937; }
+        .reading-controls button { font-size: 12px; padding: 4px 10px; }
+
+        .reading-layout { display: flex; position: relative; margin-top: 10px; }
+        .citation-ruler { flex: 0 0 50px; position: relative; user-select: none; }
+        .citation-ruler.hidden { display: none; }
+        .content-column { position: relative; flex-grow: 1; background: #fff; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); font-family: 'Georgia', serif; line-height: 1.8; }
+        .citation-ruler.hidden + .content-column { margin-left: 0; }
+
+        .citation-tick { position: absolute; left: 0; width: 100%; height: 1px; display: flex; align-items: center; }
+        .citation-tick::before { content: ''; position: absolute; left: 35px; right: 0; top: 50%; border-top: 1px dotted #ccc; }
+        .citation-tick-number { position: relative; background: #fff; padding-right: 5px; width: 35px; text-align: right; font-family: monospace; font-size: 11px; color: #aaa; cursor: pointer; }
+        .citation-tick-number:hover { color: #333; }
+
+        .preamble { position: relative; background-color: #fffbe6; padding: 15px; padding-right: 50px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ffe58f; font-style: italic; color: #6d5d33; transition: border-color 0.3s, background-color 0.3s; }
+        .preamble.feedback-correct { border-color: #a5d6a7; background-color: #e8f5e9; }
+        .preamble.feedback-overshot { border-color: #ef9a9a; background-color: #ffebee; }
+        .preamble.feedback-undershot { border-color: #fff59d; background-color: #fffde7; }
+
+        .preamble-feedback { position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; }
+        .preamble-feedback button { background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; width: 24px; height: 24px; line-height: 22px; padding: 0; }
+        .preamble-feedback button:hover { background-color: rgba(0,0,0,0.1); }
+
+        .completion-container { border-left: 2px solid #e0e0e0; padding-left: 15px; margin-bottom: 20px; scroll-margin-top: 80px; /* Adjust for sticky header */ }
+        .completion-id { font-family: monospace; font-size: 11px; color: #999; margin-bottom: 10px; }
+
+        .citable { position: relative; transition: background-color 0.3s; }
+        .citable.highlight { background-color: #fffde7; }
+        .section-break { border: 0; border-top: 1px dashed #ccc; margin: 40px 0; }
+        .error { color: #D32F2F; background-color: #FFEBEE; padding: 15px; border-radius: 8px; border: 1px solid #FFCDD2; }
+        .hidden { display: none; }
+        body.reading-mode-active .reading-mode-container { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="title-container">
+        <h1 id="main-title">Chat Codex</h1>
+        <div id="source-file-display"></div>
+    </div>
+
+    <div class="controls">
+        <button id="toggle-reading-mode">Enter Reading Mode</button>
+    </div>
+
+    <div id="reading-mode-container" class="reading-mode-container">
+        <div class="top-bar">
+            <div id="stats-bar" class="stats-bar"></div>
+            <div class="reading-controls">
+                <button id="toggle-preamble" class="reading-mode-btn hidden">Preamble</button>
+                <button id="toggle-citations" class="reading-mode-btn hidden">Citations</button>
+            </div>
+        </div>
+        <div class="reading-layout">
+            <div id="citation-ruler" class="citation-ruler"></div>
+            <div id="content-column" class="content-column"></div>
+        </div>
+    </div>
+
+    <script>
+        console.log('Initializing Chat Codex v4');
+        let isReadingMode = false;
+        const JSON_SOURCE_FILE = './cleaned_chat.json';
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => { clearTimeout(timeout); func(...args); };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        function renderMarkdown(text) {
+            const rawMarkup = marked.parse(text || '');
+            return DOMPurify.sanitize(rawMarkup, {ADD_TAGS: ['span'], ADD_ATTR: ['data-cite-id']});
+        }
+
+        function buildCitationRuler() {
+            console.log('%cBuilding Citation Ruler (Robust Method)...', 'color: blue; font-weight: bold;');
+            requestAnimationFrame(() => {
+                const ruler = document.getElementById('citation-ruler');
+                const content = document.getElementById('content-column');
+                if (!ruler || !content) return;
+                ruler.innerHTML = '';
+
+                const contentRect = content.getBoundingClientRect();
+                const citables = content.querySelectorAll('.citable');
+                console.log(`Found ${citables.length} citable elements to draw.`);
+
+                citables.forEach(el => {
+                    const citeId = el.dataset.citeId;
+                    const elRect = el.getBoundingClientRect();
+
+                    // This is the robust way: calculate position relative to the content column's viewport position.
+                    // This avoids all issues with intermediate positioned parents (the offsetParent problem).
+                    const relativeTop = elRect.top - contentRect.top;
+
+                    console.log(`  [ID: ${citeId}] -> RelativeTop: ${relativeTop.toFixed(2)}px, Element: <${el.tagName}>, Text: "${el.textContent.substring(0, 40).trim()}..."`);
+
+                    const tick = document.createElement('div');
+                    tick.className = 'citation-tick';
+                    const tickNumber = document.createElement('div');
+                    tickNumber.className = 'citation-tick-number';
+                    tickNumber.textContent = citeId;
+                    tick.appendChild(tickNumber);
+
+                    const firstLineHeight = parseInt(window.getComputedStyle(el).lineHeight, 10);
+                    tick.style.top = `${relativeTop + (firstLineHeight / 2) - 1}px`;
+
+                    ruler.appendChild(tick);
+                });
+            });
+        }
+
+        const debouncedBuildRuler = debounce(buildCitationRuler, 150);
+
+        function setupToggles() {
+            console.log('Setting up UI toggles and event listeners.');
+            const readingModeButton = document.getElementById('toggle-reading-mode');
+            readingModeButton.addEventListener('click', () => {
+                console.log('Toggling Reading Mode');
+                isReadingMode = !isReadingMode;
+                document.body.classList.toggle('reading-mode-active');
+                readingModeButton.textContent = isReadingMode ? 'Exit Reading Mode' : 'Enter Reading Mode';
+                document.querySelectorAll('.reading-mode-btn').forEach(btn => btn.classList.toggle('hidden'));
+
+                if (isReadingMode) {
+                    if (document.getElementById('content-column').innerHTML === '') buildReadingMode();
+                    window.addEventListener('resize', debouncedBuildRuler);
+                } else {
+                    window.removeEventListener('resize', debouncedBuildRuler);
+                }
+            });
+
+            document.getElementById('toggle-preamble').addEventListener('click', () => {
+                console.log('Toggling Preamble visibility.');
+                document.querySelectorAll('.preamble').forEach(el => el.classList.toggle('hidden'));
+                debouncedBuildRuler();
+            });
+
+            document.getElementById('toggle-citations').addEventListener('click', () => {
+                console.log('Toggling Citation Ruler visibility.');
+                const ruler = document.getElementById('citation-ruler');
+                ruler.classList.toggle('hidden');
+                if (!ruler.classList.contains('hidden')) debouncedBuildRuler();
+            });
+
+            document.getElementById('content-column').addEventListener('click', (e) => {
+                const button = e.target.closest('[data-feedback]');
+                if (!button) return;
+                console.log(`Preamble feedback button clicked: ${button.dataset.feedback}`);
+                const preamble = button.closest('.preamble');
+                preamble.classList.remove('feedback-correct', 'feedback-overshot', 'feedback-undershot');
+                preamble.classList.add(`feedback-${button.dataset.feedback}`);
+            });
+
+            document.getElementById('stats-bar').addEventListener('click', (e) => {
+                const navButton = e.target.closest('[data-completion-id]');
+                if (navButton) {
+                    const targetId = navButton.dataset.completionId;
+                    console.log(`Navigating to ${targetId}`);
+                    document.getElementById(targetId).scrollIntoView();
+                }
+            });
+
+            document.getElementById('citation-ruler').addEventListener('click', (e) => {
+                const tickNumber = e.target.closest('.citation-tick-number');
+                if (!tickNumber) return;
+
+                const citableId = tickNumber.textContent;
+                console.log(`%cClicked Citation [${citableId}]`, 'color: green; font-weight: bold;');
+                const targetElement = document.querySelector(`.citable[data-cite-id='${citableId}']`);
+
+                if (targetElement) {
+                    console.log('  Found Target:', targetElement);
+                    console.log(`  Target OffsetTop: ${targetElement.offsetTop}`);
+
+                    document.querySelectorAll('.citable.highlight').forEach(el => el.classList.remove('highlight'));
+                    targetElement.classList.add('highlight');
+
+                    // Visual Debugging for offsetParent
+                    const offsetParent = targetElement.offsetParent;
+                    if (offsetParent) {
+                        console.log('  Target offsetParent:', offsetParent);
+                        offsetParent.style.outline = '2px dashed red';
+                        setTimeout(() => { offsetParent.style.outline = ''; }, 2000);
+                    }
+                } else {
+                    console.error(`  Could not find element for citation ID ${citableId}`);
+                }
+            });
+        }
+
+        function processCompletion(htmlContent) {
+            const container = document.createElement('div');
+            container.innerHTML = htmlContent;
+            const firstCitableElement = container.querySelector('h1, h2, h3, p, li');
+            let hasPreamble = false;
+
+            if (firstCitableElement) {
+                const preambleNodes = [];
+                let currentNode = container.firstChild;
+                while (currentNode) {
+                    preambleNodes.push(currentNode);
+                    if (currentNode === firstCitableElement || (currentNode.nodeType === 1 && currentNode.contains(firstCitableElement))) break;
+                    currentNode = currentNode.nextSibling;
+                }
+
+                if (preambleNodes.some(n => (n.textContent || '').trim().length > 0)) {
+                    const preambleWrapper = document.createElement('div');
+                    preambleWrapper.className = 'preamble';
+                    const feedbackControls = document.createElement('div');
+                    feedbackControls.className = 'preamble-feedback';
+                    feedbackControls.innerHTML = `<button title="Correct" data-feedback="correct">✔</button><button title="Overshot" data-feedback="overshot">-</button><button title="Undershot" data-feedback="undershot">+</button>`;
+                    preambleWrapper.appendChild(feedbackControls);
+                    preambleNodes.forEach(node => preambleWrapper.appendChild(node.cloneNode(true)));
+                    preambleNodes.forEach(node => node.remove());
+                    container.insertBefore(preambleWrapper, container.firstChild);
+                    hasPreamble = true;
+                }
+            }
+            return { content: container, hasPreamble };
+        }
+
+        async function buildReadingMode() {
+            console.log('--- Building Reading Mode ---');
+            const contentColumn = document.getElementById('content-column');
+            const statsBar = document.getElementById('stats-bar');
+            contentColumn.innerHTML = '';
+            statsBar.innerHTML = '';
+            document.getElementById('source-file-display').textContent = JSON_SOURCE_FILE;
+
+            try {
+                const response = await fetch(JSON_SOURCE_FILE);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const contents = await response.json();
+
+                const modelCompletions = contents
+                    .filter(item => item.role === 'model' && item.parts.length > 1)
+                    .map(item => item.parts.slice(1).map(p => p.text).join('\n\n'));
+                console.log(`Found ${modelCompletions.length} model completions.`);
+                
+                let citationCounter = 0;
+                let preambleCount = 0;
+
+                modelCompletions.forEach((completionText, index) => {
+                    const completionId = `completion-container-${index + 1}`;
+                    const completionContainer = document.createElement('div');
+                    completionContainer.className = 'completion-container';
+                    completionContainer.id = completionId;
+                    completionContainer.innerHTML = `<div class="completion-id">COMPLETION ${index + 1}</div>`;
+
+                    const { content, hasPreamble } = processCompletion(renderMarkdown(completionText));
+                    if (hasPreamble) {
+                        preambleCount++;
+                        console.log(`Preamble detected in completion ${index + 1}.`);
+                    }
+
+                    content.querySelectorAll('h1, h2, h3, p, li').forEach(el => {
+                        if (!el.closest('.preamble') && el.textContent.trim() !== '') {
+                            el.classList.add('citable');
+                            el.dataset.citeId = ++citationCounter;
+                        }
+                    });
+
+                    completionContainer.appendChild(content);
+                    contentColumn.appendChild(completionContainer);
+
+                    if (index < modelCompletions.length - 1) contentColumn.appendChild(document.createElement('hr'));
+
+                    const navButton = document.createElement('div');
+                    navButton.className = 'nav-button';
+                    navButton.textContent = index + 1;
+                    navButton.dataset.completionId = completionId;
+                    statsBar.appendChild(navButton);
+                });
+
+                console.log('Waiting for fonts to load...');
+                await document.fonts.ready;
+                console.log('Fonts loaded. Deferring ruler build to ensure layout is final.');
+                // This timeout is critical. It gives the browser a moment to reflow the entire layout
+                // after the dynamic content has been added, ensuring that all offsetTop values are accurate.
+                setTimeout(() => {
+                    buildCitationRuler();
+                }, 100); // 100ms is a safe buffer.
+
+            } catch (error) {
+                contentColumn.innerHTML = `<div class="error"><strong>Error:</strong> Could not build reading mode.<br>${error.message}</div>`;
+                console.error('Failed to build reading mode:', error);
+            }
+        }
+
+        setupToggles();
+    </script>
+
+</body>
+</html>

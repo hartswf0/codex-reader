@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Codex | A Soft Memory Space</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #FDFBF5; /* Warm, off-white like aged paper */
+            --text-color: #3D352E; /* Soft, dark brown */
+            --border-color: #EAE3D9; /* Faint, manila folder edge */
+            --accent-color: #4A7C59; /* Muted, natural green */
+            --highlight-bg: #F3F0E7; /* Subtle highlight, like a different paper stock */
+            --font-serif: 'Lora', serif;
+            --font-sans: 'Inter', sans-serif;
+        }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 0 2rem;
+            line-height: 1.7;
+            font-weight: 400;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Selection Screen: Styled like an archival box */
+        #selection-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(253, 251, 245, 0.9);
+            backdrop-filter: blur(4px);
+            display: flex; justify-content: center; align-items: center; z-index: 1000;
+        }
+        #selection-box {
+            background: var(--bg-color);
+            padding: 2.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            width: 90%; max-width: 450px; text-align: center;
+        }
+        #selection-box h2 {
+            font-family: var(--font-serif);
+            font-weight: 600; font-style: italic;
+            font-size: 1.5rem; margin: 0 0 1.5rem 0;
+            letter-spacing: 0.5px;
+        }
+        #paper-list { list-style: none; padding: 0; margin: 0; }
+        #paper-list li {
+            background: transparent; margin: 0.5rem 0;
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            cursor: pointer; transition: all 0.2s ease-in-out;
+        }
+        #paper-list li:hover {
+            border-color: var(--accent-color);
+            background-color: var(--highlight-bg);
+            color: var(--accent-color);
+            transform: scale(1.02);
+        }
+
+        /* Reader: The main codex interface */
+        #reader-container {
+            display: none; /* Hidden by default */
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 3rem 0;
+        }
+
+        #reader-header {
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 3rem;
+            display: flex; justify-content: space-between; align-items: flex-end;
+        }
+        #title-block h1 {
+            font-family: var(--font-serif);
+            font-weight: 600; font-size: 2.25rem; margin: 0;
+        }
+        #source-file-display {
+            font-family: var(--font-sans); color: #9E948A; font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+        #controls button {
+            background: transparent; border: 1px solid var(--border-color);
+            color: #9E948A; font-size: 1rem; 
+            width: 38px; height: 38px; border-radius: 50%;
+            cursor: pointer; transition: all 0.2s ease;
+            margin-left: 0.5rem;
+        }
+        #controls button:hover, #controls button.active {
+            background: var(--accent-color);
+            color: var(--bg-color);
+            border-color: var(--accent-color);
+        }
+
+        .citable-pair {
+            display: flex;
+            align-items: baseline; 
+        }
+
+        .citation-marker {
+            flex-shrink: 0; /* Prevent shrinking */
+            width: 50px;
+            margin-left: -60px; /* Pull into the padding */
+            padding-right: 10px; /* Space from text */
+            text-align: right;
+            font-family: var(--font-sans);
+            font-size: 0.75rem;
+            color: var(--text-subtle);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .citation-marker:hover, .citation-marker.highlighted {
+            color: var(--accent-color);
+            font-weight: 500;
+        }
+
+        /* New toggle logic */
+        body.citations-hidden .citation-marker {
+            display: none;
+        }
+
+        /* Content Column: The archival artifact */
+        #content-column {
+            font-family: var(--font-serif);
+            font-size: 1.1rem;
+            min-width: 0; /* Prevents grid overflow */
+            padding-left: 60px; /* Create stable space for numbers */
+        }
+        .completion-container {
+            margin-bottom: 3rem;
+            padding-bottom: 3rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .completion-container:last-child { border-bottom: none; }
+
+        .preamble {
+            background-color: var(--highlight-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+            font-family: var(--font-sans);
+            font-size: 0.9rem;
+            color: #6B6258;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            overflow: hidden; max-height: 1000px; opacity: 1;
+        }
+        body.preambles-hidden .preamble {
+            max-height: 0; padding-top: 0; padding-bottom: 0;
+            margin-bottom: 0; opacity: 0; border: none;
+        }
+        .preamble-label {
+            font-weight: 500; font-size: 0.8rem; display: block;
+            margin-bottom: 0.5rem; color: #3D352E;
+        }
+
+        .citable {
+            flex: 1;
+            min-width: 0; /* Prevents flexbox overflow */
+            transition: background-color 0.4s ease;
+        }
+        .citable.highlight {
+            background-color: var(--highlight-bg);
+        }
+        p { margin: 0 0 1.5em 0; }
+        h1, h2, h3 { font-family: var(--font-serif); font-weight: 600; margin: 2em 0 1em 0; }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: var(--highlight-bg);
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+        }
+
+        /* Table Styles */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 2rem 0;
+            font-size: 0.9rem;
+            border-spacing: 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02), 0 1px 2px rgba(0,0,0,0.04);
+            border-radius: 6px;
+            overflow: hidden; /* For border-radius to work on tables */
+        }
+        th, td {
+            padding: 1rem 1.25rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            vertical-align: top; /* Align content to the top */
+        }
+        thead th {
+            background-color: var(--highlight-bg);
+            font-weight: 600;
+            border-bottom: 2px solid var(--border-color);
+        }
+        tbody tr {
+            transition: background-color 0.15s ease-in-out;
+        }
+        tbody tr:last-child th,
+        tbody tr:last-child td {
+            border-bottom: 0; /* Remove border from last row */
+        }
+        tbody tr:nth-child(even) {
+            background-color: var(--highlight-bg-subtle, #F8F6F3);
+        }
+        tbody tr:hover {
+            background-color: var(--highlight-bg);
+        }
+
+        /* Mermaid Diagram Styles */
+        .mermaid-container {
+            position: relative;
+            padding: 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            margin: 2rem 0;
+            background: var(--bg-color);
+        }
+        .mermaid-toggle-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-subtle);
+            font-family: var(--font-sans);
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            z-index: 10;
+        }
+        .mermaid-toggle-btn:hover {
+            background: var(--highlight-bg);
+            color: var(--text-main);
+        }
+        .mermaid-code-wrapper {
+            display: none; /* Initially hidden */
+        }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="selection-overlay">
+        <div id="selection-box">
+            <h2>Codex Archive</h2>
+            <ul id="paper-list"></ul>
+        </div>
+    </div>
+
+    <div id="reader-container">
+        <header id="reader-header">
+            <div id="title-block">
+                <h1>Codex</h1>
+                <div id="source-file-display"></div>
+            </div>
+            <div id="controls">
+                <button id="toggle-preamble-btn" title="Toggle Reasoning">R</button>
+                <button id="toggle-citations-btn" title="Toggle Citations">#</button>
+                <button id="exit-btn" title="Exit to Archive">×</button>
+            </div>
+        </header>
+
+        <main id="content-column"></main>
+    </div>
+
+    <script>
+    async function enhanceContent() {
+        // Process Mermaid Blocks using a robust for...of loop for async operations
+        const blocks = document.querySelectorAll('code.language-mermaid');
+        for (const [index, block] of blocks.entries()) {
+            const code = block.textContent;
+            const pre = block.parentElement;
+            const container = document.createElement('div');
+            container.className = 'mermaid-container';
+            
+            const svgContainer = document.createElement('div');
+            const svgId = `mermaid-svg-${index}`;
+            
+            try {
+                const { svg } = await mermaid.render(svgId, code);
+                svgContainer.innerHTML = svg;
+            } catch (error) {
+                svgContainer.innerHTML = `<strong>Error rendering graph:</strong><pre>${error.message}</pre>`;
+            }
+
+            const codeWrapper = document.createElement('div');
+            codeWrapper.className = 'mermaid-code-wrapper';
+            codeWrapper.appendChild(pre.cloneNode(true));
+
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'mermaid-toggle-btn';
+            toggleBtn.textContent = 'View Code';
+            toggleBtn.addEventListener('click', () => {
+                const isCodeVisible = codeWrapper.style.display === 'block';
+                if (isCodeVisible) {
+                    codeWrapper.style.display = 'none';
+                    svgContainer.style.display = 'block';
+                    toggleBtn.textContent = 'View Code';
+                } else {
+                    codeWrapper.style.display = 'block';
+                    svgContainer.style.display = 'none';
+                    toggleBtn.textContent = 'View Graph';
+                }
+            });
+
+            container.appendChild(toggleBtn);
+            container.appendChild(svgContainer);
+            container.appendChild(codeWrapper);
+            
+            pre.parentNode.replaceChild(container, pre);
+        }
+    }
+
+    function whenMermaidReady(callback) {
+        const check = () => {
+            if (typeof mermaid !== 'undefined' && mermaid.render) {
+                callback();
+            } else {
+                setTimeout(check, 100);
+            }
+        };
+        check();
+    }
+
+    whenMermaidReady(async () => {
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: 'base',
+            themeVariables: {
+                background: '#FAF8F5',
+                primaryColor: '#F4F1ED',
+                primaryTextColor: '#3D352E',
+                lineColor: '#DCD6CC',
+                secondaryColor: '#EFEAE4',
+            }
+        });
+        const readerContainer = document.getElementById('reader-container');
+        const selectionOverlay = document.getElementById('selection-overlay');
+        const contentColumn = document.getElementById('content-column');
+        const sourceFileDisplay = document.getElementById('source-file-display');
+        const togglePreambleBtn = document.getElementById('toggle-preamble-btn');
+        const toggleCitationsBtn = document.getElementById('toggle-citations-btn');
+        const exitBtn = document.getElementById('exit-btn');
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const paperFile = urlParams.get('paper');
+
+        // Define a custom extension for marked.js to handle the <tag> syntax
+        // without interfering with code blocks. This is the correct, robust solution.
+        const customTagExtension = {
+            name: 'customTag',
+            level: 'inline',
+            start(src) { return src.indexOf('<'); },
+            tokenizer(src) {
+                // Explicitly ignore <br> tags to let the default parser handle them as HTML.
+                const brRule = /^<br\s*\/?>/i;
+                if (brRule.test(src)) {
+                    return false; // Let default parser handle it
+                }
+
+                const rule = /^<([a-zA-Z_][a-zA-Z0-9_]*)>/;
+                const match = rule.exec(src);
+                if (match) {
+                    return {
+                        type: 'customTag',
+                        raw: match[0],
+                        text: match[1]
+                    };
+                }
+            },
+            renderer(token) {
+                return `&lt;${token.text}&gt;`;
+            }
+        };
+
+        marked.use({ extensions: [customTagExtension] });
+
+        function renderMarkdown(text) {
+            // breaks: true allows <br> tags and newlines to be rendered as line breaks.
+            // My custom extension prevents other <tags> from being treated as HTML.
+            return DOMPurify.sanitize(marked.parse(text, { breaks: true, gfm: true }));
+        }
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => { clearTimeout(timeout); func(...args); };
+                clearTimeout(timeout); timeout = setTimeout(later, wait);
+            };
+        }
+
+        const setupUI = () => {
+            togglePreambleBtn.addEventListener('click', () => {
+                document.body.classList.toggle('preambles-hidden');
+                togglePreambleBtn.classList.toggle('active');
+            });
+            toggleCitationsBtn.addEventListener('click', async () => {
+                document.body.classList.toggle('citations-hidden');
+                await renderCitations();
+                toggleCitationsBtn.classList.toggle('active');
+            });
+            exitBtn.addEventListener('click', () => {
+                window.location.href = window.location.pathname; // Go to selection
+            });
+            togglePreambleBtn.classList.add('active');
+            toggleCitationsBtn.classList.add('active');
+        }
+
+        async function loadPaper(sourceFile) {
+            readerContainer.style.display = 'block';
+            selectionOverlay.style.display = 'none';
+            contentColumn.innerHTML = '<p>Loading artifact...</p>';
+            sourceFileDisplay.textContent = `Source: ${sourceFile}`;
+
+            try {
+                const response = await fetch(sourceFile);
+                if (!response.ok) throw new Error(`Could not fetch ${sourceFile}`);
+                const contents = await response.json();
+
+                contentColumn.innerHTML = '';
+                let citationCounter = 0;
+                const modelCompletions = contents.filter(item => item.role === 'model' && item.parts && item.parts.length > 0 && item.parts.some(p => p.text && p.text.trim() !== ''));
+
+                modelCompletions.forEach((completion) => {
+                    const completionContainer = document.createElement('div');
+                    completionContainer.className = 'completion-container';
+
+                    let preambleText = '';
+                    let mainContent = '';
+
+                    if (completion.parts.length > 1) {
+                        preambleText = (completion.parts[0]?.text || '').trim();
+                        mainContent = completion.parts.slice(1).map(p => p.text).join('\n\n').trim();
+                    } else {
+                        mainContent = (completion.parts[0]?.text || '').trim();
+                    }
+
+                    if (preambleText) {
+                        const preambleWrapper = document.createElement('div');
+                        preambleWrapper.className = 'preamble';
+                        preambleWrapper.innerHTML = `<span class="preamble-label">Reasoning Trace</span>${renderMarkdown(preambleText)}`;
+                        completionContainer.appendChild(preambleWrapper);
+                    }
+
+                    if (mainContent) {
+                        const tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = renderMarkdown(mainContent);
+
+                        const nodesToProcess = Array.from(tempDiv.childNodes);
+
+                        nodesToProcess.forEach(node => {
+                            if (node.nodeType === Node.ELEMENT_NODE && node.matches('p, li, h1, h2, h3, h4, blockquote') && node.textContent.trim().length > 10) {
+                                const citeId = ++citationCounter;
+                                
+                                const pair = document.createElement('div');
+                                pair.className = 'citable-pair';
+
+                                const marker = document.createElement('div');
+                                marker.className = 'citation-marker';
+                                marker.textContent = citeId;
+
+                                node.classList.add('citable');
+
+                                marker.addEventListener('click', () => {
+                                    pair.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    document.querySelectorAll('.citable.highlight, .citation-marker.highlighted').forEach(h => h.classList.remove('highlight', 'highlighted'));
+                                    node.classList.add('highlight');
+                                    marker.classList.add('highlighted');
+                                    setTimeout(() => {
+                                        node.classList.remove('highlight');
+                                        marker.classList.remove('highlighted');
+                                    }, 1500);
+                                });
+
+                                pair.appendChild(marker);
+                                pair.appendChild(node);
+                                completionContainer.appendChild(pair);
+                            } else {
+                                completionContainer.appendChild(node);
+                            }
+                        });
+                    }
+                    contentColumn.appendChild(completionContainer);
+                });
+
+                await enhanceContent();
+                await document.fonts.ready;
+
+            } catch (error) {
+                contentColumn.innerHTML = `<p>Error loading document: ${error.message}</p>`;
+                console.error(error);
+            }
+        }
+
+        async function showSelection() {
+            readerContainer.style.display = 'none';
+            selectionOverlay.style.display = 'flex';
+            try {
+                const response = await fetch('.');
+                const text = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(text, 'text/html');
+                const links = Array.from(doc.querySelectorAll('a'))
+                    .map(a => a.getAttribute('href'))
+                    .filter(href => href && href.endsWith('.json'));
+                
+                paperList.innerHTML = '';
+                if (links.length === 0) {
+                    paperList.innerHTML = '<li>No .json files found in this directory.</li>';
+                    return;
+                }
+
+                links.forEach(file => {
+                    const li = document.createElement('li');
+                    li.textContent = file.replace('.json', '');
+                    li.onclick = () => { 
+                        window.history.pushState({}, '', `?paper=${file}`);
+                        loadPaper(file);
+                    };
+                    paperList.appendChild(li);
+                });
+            } catch (error) {
+                selectionOverlay.innerHTML = `<p>Error listing files. Are you running this from a server?</p>`;
+            }
+        }
+
+        // Initializer
+        setupUI();
+        if (paperFile) {
+            await loadPaper(paperFile);
+        } else {
+            showSelection();
+        }
+    });
+    </script>
+</body>
+</html>

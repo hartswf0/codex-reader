@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Codex - Reader v4</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <style>
+        /* Base and Selection Screen Styles */
+        html { scroll-behavior: smooth; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; background-color: #f7f7f7; color: #333; }
+        #selection-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 200; }
+        #selection-box { background: #fff; padding: 40px; border-radius: 10px; width: 90%; max-width: 600px; box-shadow: 0 5px 25px rgba(0,0,0,0.2); text-align: center; }
+        #selection-box h2 { margin-top: 0; font-weight: 300; font-size: 2em; }
+        #paper-list { list-style: none; padding: 0; margin-top: 20px; }
+        #paper-list li { background: #f9f9f9; margin: 10px 0; padding: 15px; border-radius: 5px; cursor: pointer; transition: background 0.2s, transform 0.2s; text-transform: capitalize; }
+        #paper-list li:hover { background: #e9e9e9; transform: scale(1.02); }
+
+        /* Reader Styles (from reader-codex-03.html) */
+        #reader-container { display: none; max-width: 800px; margin: auto; }
+        #title-container { text-align: center; margin-bottom: 20px; border-bottom: 1px solid #ddd; padding-bottom: 15px; }
+        #main-title { font-weight: 300; margin: 0; font-size: 2.5em; color: #444; }
+        #source-file-display { font-family: monospace; color: #777; font-size: 1.2em; margin-top: 5px; }
+
+        .top-bar { position: sticky; top: 0; z-index: 100; background: rgba(255,255,255,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid #e5e5e5; padding: 8px; display: flex; align-items: center; gap: 15px; }
+        .stats-bar { flex-grow: 1; display: flex; flex-wrap: wrap; gap: 5px; }
+        .nav-button { cursor: pointer; padding: 2px 8px; border-radius: 4px; background-color: #e5e7eb; color: #4b5563; font-family: monospace; font-size: 12px; }
+        .nav-button:hover { background-color: #d1d5db; color: #1f2937; }
+        .reading-controls { display: flex; gap: 10px; }
+        .reading-controls button { font-size: 12px; padding: 4px 10px; border: 1px solid #ccc; border-radius: 5px; background-color: #f0f0f0; cursor: pointer; }
+        .reading-controls button:hover { background-color: #e0e0e0; }
+
+        .reading-layout { display: flex; position: relative; margin-top: 10px; }
+        .citation-ruler { flex: 0 0 50px; position: relative; user-select: none; }
+        .citation-ruler.hidden { display: none; }
+        .content-column { position: relative; flex-grow: 1; background: #fff; padding: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); font-family: 'Georgia', serif; line-height: 1.8; min-width: 0; }
+        .citation-ruler.hidden + .content-column { margin-left: 0; }
+
+        .content-column pre { white-space: pre-wrap; word-wrap: break-word; background: #f8f8f8; border: 1px solid #eee; border-radius: 4px; padding: 1em; font-size: 14px; }
+
+        .citation-tick { position: absolute; left: 0; width: 100%; height: 1px; display: flex; align-items: center; }
+        .citation-tick::before { content: ''; position: absolute; left: 35px; right: 0; top: 50%; border-top: 1px dotted #ccc; }
+        .citation-tick-number { position: relative; background: #fff; padding-right: 5px; width: 35px; text-align: right; font-family: monospace; font-size: 11px; color: #aaa; cursor: pointer; }
+        .citation-tick-number:hover { color: #333; }
+
+        .preamble { position: relative; background-color: #fffbe6; padding: 15px; padding-right: 50px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ffe58f; font-style: italic; color: #6d5d33; transition: border-color 0.3s, background-color 0.3s; }
+        .preamble.feedback-correct { border-color: #a5d6a7; background-color: #e8f5e9; }
+        .preamble.feedback-overshot { border-color: #ef9a9a; background-color: #ffebee; }
+        .preamble.feedback-undershot { border-color: #fff59d; background-color: #fffde7; }
+
+        .preamble-feedback { position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; }
+        .preamble-feedback button { background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; width: 24px; height: 24px; line-height: 22px; padding: 0; }
+        .preamble-feedback button:hover { background-color: rgba(0,0,0,0.1); }
+
+        .completion-container { border-left: 2px solid #e0e0e0; padding-left: 15px; margin-bottom: 20px; scroll-margin-top: 80px; }
+        .completion-id { font-family: monospace; font-size: 11px; color: #999; margin-bottom: 10px; }
+
+        .citable { position: relative; transition: background-color 0.3s; }
+        .citable.highlight { background-color: #fffde7; }
+        hr { border: 0; border-top: 1px dashed #ccc; margin: 40px 0; }
+        .error { color: #D32F2F; background-color: #FFEBEE; padding: 15px; border-radius: 8px; border: 1px solid #FFCDD2; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="selection-overlay">
+        <div id="selection-box">
+            <h2>Select a Paper</h2>
+            <ul id="paper-list"></ul>
+        </div>
+    </div>
+
+    <div id="reader-container">
+        <div id="title-container">
+            <h1 id="main-title">Chat Codex</h1>
+            <div id="source-file-display"></div>
+        </div>
+            </div>
+            <div id="controls">
+                <button id="toggle-preamble-btn" title="Toggle Reasoning">🔍 Reasoning</button>
+                <button id="toggle-citations-btn" title="Toggle Citation Ruler"># Ruler</button>
+                <button id="exit-btn" title="Exit to Selection">✕ Exit</button>
+            </div>
+        </header>
+        <nav id="timeline-nav"><div id="timeline-ticks"></div></nav>
+        <main id="main-content">
+            <div id="citation-ruler"></div>
+            <div id="content-column"></div>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const readerContainer = document.getElementById('reader-container');
+            const selectionOverlay = document.getElementById('selection-overlay');
+            const urlParams = new URLSearchParams(window.location.search);
+            const paperFile = urlParams.get('paper');
+
+            function renderMarkdown(text) { return DOMPurify.sanitize(marked.parse(text, { breaks: true })); }
+            function debounce(func, wait) {
+                let timeout;
+                return function executedFunction(...args) {
+                    const later = () => { clearTimeout(timeout); func(...args); };
+                    clearTimeout(timeout); timeout = setTimeout(later, wait);
+                };
+            }
+
+            function buildCitationRuler() {
+                const citationRuler = document.getElementById('citation-ruler');
+                const contentColumn = document.getElementById('content-column');
+                citationRuler.innerHTML = '';
+                const citableElements = contentColumn.querySelectorAll('.citable');
+                const contentRect = contentColumn.getBoundingClientRect();
+
+                citableElements.forEach(el => {
+                    const elRect = el.getBoundingClientRect();
+                    const tick = document.createElement('div');
+                    tick.className = 'citation-tick';
+                    tick.style.top = `${el.offsetTop}px`;
+                    const number = document.createElement('span');
+                    number.className = 'citation-tick-number';
+                    number.textContent = el.dataset.citeId;
+                    tick.appendChild(number);
+                    citationRuler.appendChild(tick);
+                    
+                    number.addEventListener('click', () => {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        document.querySelectorAll('.citable.highlighted, .citation-tick-number.highlighted').forEach(h => h.classList.remove('highlighted'));
+                        el.classList.add('highlighted');
+                        number.classList.add('highlighted');
+                        setTimeout(() => {
+                            el.classList.remove('highlighted');
+                            number.classList.remove('highlighted');
+                        }, 1500);
+                    });
+                });
+            }
+
+            function setupToggles() {
+                const debouncedBuildRuler = debounce(buildCitationRuler, 250);
+                document.getElementById('toggle-preamble-btn').addEventListener('click', () => {
+                    document.body.classList.toggle('preambles-hidden');
+                    debouncedBuildRuler();
+                });
+                document.getElementById('toggle-citations-btn').addEventListener('click', () => {
+                    document.getElementById('citation-ruler').classList.toggle('hidden');
+                });
+                document.getElementById('exit-btn').addEventListener('click', () => { window.location.href = window.location.pathname; });
+                window.addEventListener('resize', debouncedBuildRuler);
+            }
+
+            async function buildReadingMode(sourceFile) {
+                const contentColumn = document.getElementById('content-column');
+                const timelineTicks = document.getElementById('timeline-ticks');
+                contentColumn.innerHTML = '';
+                timelineTicks.innerHTML = '';
+                document.getElementById('source-file-display').textContent = `✧ ${sourceFile} ✧`;
+                try {
+                    const response = await fetch(sourceFile);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    const contents = await response.json();
+                    const modelCompletions = contents
+                        .filter(item => item.role === 'model' && item.parts.some(p => p.text && p.text.trim() !== ''))
+                        .map(item => ({ preamble: item.parts[0]?.text || '', content: item.parts.slice(1).map(p => p.text).join('\n\n') }));
+
+                    let citationCounter = 0;
+                    modelCompletions.forEach((completion, index) => {
+                        const completionId = `completion-container-${index + 1}`;
+                        const completionContainer = document.createElement('div');
+                        completionContainer.className = 'completion-container';
+                        completionContainer.id = completionId;
+
+                        if (completion.preamble && completion.preamble.trim() !== '') {
+                            const preambleWrapper = document.createElement('div');
+                            preambleWrapper.className = 'preamble';
+                            preambleWrapper.innerHTML = `<span class="preamble-label">🔍 Reasoning</span>` + renderMarkdown(completion.preamble);
+                            completionContainer.appendChild(preambleWrapper);
+                        }
+
+                        if (completion.content && completion.content.trim() !== '') {
+                            const contentWrapper = document.createElement('div');
+                            contentWrapper.innerHTML = renderMarkdown(completion.content);
+                            contentWrapper.querySelectorAll('h1, h2, h3, p, li').forEach(el => {
+                                if (el.textContent.trim() !== '') {
+                                    el.classList.add('citable');
+                                    el.dataset.citeId = ++citationCounter;
+                                }
+                            });
+                            while (contentWrapper.firstChild) { completionContainer.appendChild(contentWrapper.firstChild); }
+                        }
+                        
+                        contentColumn.appendChild(completionContainer);
+                        if (index < modelCompletions.length - 1) contentColumn.appendChild(document.createElement('hr'));
+
+                        const navTick = document.createElement('a');
+                        navTick.className = 'timeline-tick';
+                        navTick.href = `#${completionId}`;
+                        navTick.textContent = `[${index + 1}]`;
+                        navTick.onclick = (e) => {
+                            e.preventDefault();
+                            document.getElementById(completionId).scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            window.history.replaceState(null, '', `?paper=${sourceFile}#${completionId}`);
+                        };
+                        timelineTicks.appendChild(navTick);
+                    });
+
+                    await document.fonts.ready;
+                    setTimeout(buildCitationRuler, 100);
+                    setupToggles();
+                } catch (error) {
+                    contentColumn.innerHTML = `<div class="error"><strong>Error:</strong> Could not build reading mode.<br>${error.message}</div>`;
+                    console.error('Failed to build reading mode:', error);
+                }
+            }
+
+            async function initialize() {
+                if (paperFile) {
+                    selectionOverlay.style.display = 'none';
+                    readerContainer.classList.remove('hidden');
+                    await buildReadingMode(paperFile);
+                } else {
+                    try {
+                        const response = await fetch('.');
+                        const text = await response.text();
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(text, 'text/html');
+                        const links = Array.from(doc.querySelectorAll('a')).map(a => a.getAttribute('href')).filter(href => href.endsWith('.json'));
+                        const selectionList = document.getElementById('selection-list');
+                        selectionList.innerHTML = '';
+                        links.forEach(file => {
+                            const button = document.createElement('button');
+                            button.textContent = file;
+                            button.onclick = () => { window.location.search = `?paper=${file}`; };
+                            selectionList.appendChild(button);
+                        });
+                    } catch (error) {
+                        document.getElementById('selection-box').innerHTML = `<div class="error"><strong>Error:</strong> Could not list JSON files.<br>Please ensure you are running this from a local web server.</div>`;
+                    }
+                }
+            }
+
+            initialize();
+        });
+    </script>
+</body>
+</html>

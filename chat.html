@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Chat Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; background-color: #f7f7f7; color: #333; }
+        h1 { text-align: center; color: #444; font-weight: 300; }
+        
+        .controls { 
+            max-width: 800px; 
+            margin: 0 auto 20px auto; 
+            padding: 10px; 
+            background-color: #fff; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        .controls button {
+            padding: 8px 16px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f0f0f0;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .controls button:hover {
+            background-color: #e0e0e0;
+        }
+
+        .chat-container { max-width: 800px; margin: auto; }
+        .message { margin-bottom: 20px; padding: 15px; border-radius: 12px; line-height: 1.6; display: flex; flex-direction: column; background-color: white; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
+        .user { border-left: 4px solid #2196F3; }
+        .model { border-left: 4px solid #4CAF50; }
+        
+        .message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .role { font-weight: 600; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .user .role { color: #1976D2; }
+        .model .role { color: #2E7D32; }
+        .message-id { font-size: 0.8em; color: #888; font-family: monospace; }
+
+        .part-container { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; }
+        .part-label { font-weight: bold; font-size: 0.8em; color: #555; margin-bottom: 5px; text-transform: uppercase; }
+        
+        .text-content { font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace; font-size: 14px; color: #263238; }
+        .text-content p:first-child { margin-top: 0; }
+        .text-content p:last-child { margin-bottom: 0; }
+        .text-content h1, .text-content h2, .text-content h3 { margin-top: 1em; margin-bottom: 0.5em; color: #333; }
+        .text-content code { background-color: #eee; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+        .text-content pre { background-color: #f4f4f4; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }
+        .text-content blockquote { border-left: 3px solid #ccc; padding-left: 15px; margin-left: 0; color: #666; }
+        .text-content ul, .text-content ol { padding-left: 20px; }
+
+        .error { color: #D32F2F; background-color: #FFEBEE; padding: 15px; border-radius: 8px; border: 1px solid #FFCDD2; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Chat Transcript</h1>
+
+    <div class="controls">
+        <button id="toggle-user">Toggle User</button>
+        <button id="toggle-model">Toggle Model</button>
+        <button id="toggle-reasoning">Toggle Reasoning</button>
+    </div>
+
+    <div id="chat-container" class="chat-container"></div>
+
+    <script>
+        function renderMarkdown(text) {
+            const rawMarkup = marked.parse(text || '');
+            return DOMPurify.sanitize(rawMarkup);
+        }
+
+        async function loadChat() {
+            const chatContainer = document.getElementById('chat-container');
+            let messageCounter = 0;
+
+            try {
+                const response = await fetch('./cleaned_chat.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const contents = await response.json();
+
+                if (!contents || !Array.isArray(contents)) {
+                    throw new Error("The file does not contain a valid chat array.");
+                }
+
+                contents.forEach(item => {
+                    if (!item || !item.role || !item.parts) return;
+
+                    messageCounter++;
+                    const messageDiv = document.createElement('div');
+                    messageDiv.classList.add('message', item.role);
+                    messageDiv.id = `msg-${messageCounter}`;
+
+                    const headerDiv = document.createElement('div');
+                    headerDiv.className = 'message-header';
+                    
+                    const roleDiv = document.createElement('div');
+                    roleDiv.className = 'role';
+                    roleDiv.textContent = item.role;
+
+                    const idDiv = document.createElement('div');
+                    idDiv.className = 'message-id';
+                    idDiv.textContent = `#${messageCounter}`;
+                    
+                    headerDiv.appendChild(roleDiv);
+                    headerDiv.appendChild(idDiv);
+                    messageDiv.appendChild(headerDiv);
+
+                    if (item.role === 'model' && item.parts.length > 1) {
+                        const reasoningPart = item.parts[0];
+                        const completionParts = item.parts.slice(1);
+
+                        const reasoningContainer = document.createElement('div');
+                        reasoningContainer.className = 'part-container reasoning-part';
+                        const reasoningLabel = document.createElement('div');
+                        reasoningLabel.className = 'part-label';
+                        reasoningLabel.textContent = 'Reasoning';
+                        const reasoningText = document.createElement('div');
+                        reasoningText.className = 'text-content';
+                        reasoningText.innerHTML = renderMarkdown(reasoningPart.text);
+                        reasoningContainer.appendChild(reasoningLabel);
+                        reasoningContainer.appendChild(reasoningText);
+                        messageDiv.appendChild(reasoningContainer);
+                        
+                        const completionContainer = document.createElement('div');
+                        completionContainer.className = 'part-container';
+                        const completionLabel = document.createElement('div');
+                        completionLabel.className = 'part-label';
+                        completionLabel.textContent = 'Completion';
+                        const completionText = document.createElement('div');
+                        completionText.className = 'text-content';
+                        completionText.innerHTML = renderMarkdown(completionParts.map(p => p.text).join('\n\n'));
+                        completionContainer.appendChild(completionLabel);
+                        completionContainer.appendChild(completionText);
+                        messageDiv.appendChild(completionContainer);
+
+                    } else {
+                        const textDiv = document.createElement('div');
+                        textDiv.className = 'text-content';
+                        textDiv.innerHTML = renderMarkdown(item.parts.map(p => p.text).join('\n\n'));
+                        messageDiv.appendChild(textDiv);
+                    }
+
+                    chatContainer.appendChild(messageDiv);
+                });
+
+            } catch (error) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error';
+                errorDiv.innerHTML = `<strong>Error:</strong> Could not load or parse chat data.<br>${error.message}`;
+                chatContainer.appendChild(errorDiv);
+                console.error(error);
+            }
+        }
+
+        function setupToggles() {
+            document.getElementById('toggle-user').addEventListener('click', () => {
+                document.querySelectorAll('.message.user').forEach(el => el.classList.toggle('hidden'));
+            });
+
+            document.getElementById('toggle-model').addEventListener('click', () => {
+                document.querySelectorAll('.message.model').forEach(el => el.classList.toggle('hidden'));
+            });
+
+            document.getElementById('toggle-reasoning').addEventListener('click', () => {
+                document.querySelectorAll('.reasoning-part').forEach(el => el.classList.toggle('hidden'));
+            });
+        }
+
+        loadChat();
+        setupToggles();
+    </script>
+
+</body>
+</html>
